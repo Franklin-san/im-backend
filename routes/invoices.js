@@ -1,22 +1,54 @@
 const express = require('express');
 const router = express.Router();
-const { getQboClient } = require('../lib/qbo');
+const { getQboClientFromStorage, hasValidTokens, getStoredTokens } = require('../lib/qbo');
+const QuickBooks = require('node-quickbooks');
 
-// Helper function to check if QBO client is properly configured
+// Helper function to get QBO client with proper error handling
 function getQboClientOrError() {
-  const access_token = process.env.QBO_ACCESS_TOKEN;
-  const realmId = process.env.QBO_REALM_ID;
-  
-  if (!access_token || access_token === ' eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2IiwieC5vcmciOiJIMCJ9..gQfWK09IKMJNYD3Djd5Zkw.-SLXwR_D-z97yT24BApkW1KIPc3NuRwGXhukntyY_q3Tc180m12VF0ycMxWAlbC1jRaDPFHR7XXwj2LzcgLk3hy7_c2SkyGAuUCL0lrHEghPZ_sNy9lQxUaGlxlHTX1OC3k8q4qDYkJfQRBFRg1PlZyCOgl1_fhMn4XUNsf0E0qJ8HigC2ptnvxbq09vOMz7VdMzJPeDgilloC8O9qEuMMVdVN_nAWJpgsalRTCh-0UyZNQdkzn2SN3zPrpnZMQJSaq6r_sMfW3iUJ-HncYnm53fUkALqvv_i8qHQ4gBEmAETc9bOIhuOgjvLVIAvii_OXaXudQSEorbmlnVAbtC8EJOtQpwLrpBkLV1jT71GYWeTibGvpu61tvBP_2WkXEtshDULeUU-vj8P4bE6CWMmd4i2QmqYGWbVljz2SXi0_vojHkSJ0YahxCI5UiI02m4ZxZAr-UiVIxLzLbnYzNFbdJeJN3bE2b-JU8UJOyeA8M.OBfhpcCwllVpD8t6bblbcA') {
-    throw new Error('QBO access token not configured. Please set QBO_ACCESS_TOKEN in your environment variables.');
+  if (!hasValidTokens()) {
+    throw new Error('No valid tokens available. Please complete OAuth flow first by visiting /auth/start');
   }
   
-  if (!realmId || realmId === '9341454903911463') {
-    throw new Error('QBO realm ID not configured. Please set QBO_REALM_ID in your environment variables.');
-  }
-  
-  return getQboClient(access_token, realmId);
+  const tokens = getStoredTokens();
+  const qbo = new QuickBooks(
+    process.env.CLIENT_ID,           // clientId
+    process.env.CLIENT_SECRET,       // clientSecret  
+    tokens.access_token,              // accessToken
+    false,                          // refreshToken
+    tokens.realm_id,                 // realmId
+    process.env.NODE_ENV !== 'production', // useSandbox
+    process.env.NODE_ENV !== 'production', // debug
+    null,                           // minorversion
+    '2.0',                          // oauthversion
+    process.env.CLIENT_SECRET        // tokenSecret (using client secret)
+  );
+  return qbo;
 }
+
+// GET /invoices/status - Check token status
+router.get('/status', (req, res) => {
+  try {
+    const tokens = getStoredTokens();
+    const isValid = hasValidTokens();
+    
+    res.json({
+      tokens_available: isValid,
+      message: isValid ? 'Tokens are available and valid' : 'No valid tokens available',
+      token_info: {
+        has_access_token: !!tokens.access_token,
+        has_realm_id: !!tokens.realm_id,
+        has_refresh_token: !!tokens.refresh_token,
+        expires_at: tokens.expires_at ? new Date(tokens.expires_at).toISOString() : null,
+        is_expired: tokens.expires_at ? Date.now() > tokens.expires_at : false
+      },
+      next_steps: isValid ? 
+        'You can now use the invoice endpoints' : 
+        'Visit /auth/start to authenticate with QuickBooks'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // GET /invoices/:id
 router.get('/:id', (req, res) => {

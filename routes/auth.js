@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getAuthorizationUri, getAccessToken, validateOAuthConfig } = require('../lib/oauth');
+const { storeTokens, hasValidTokens } = require('../lib/qbo');
 
 router.get('/start', (req, res) => {
   try {
@@ -39,6 +40,9 @@ router.get('/callback', async (req, res) => {
   try {
     const tokenData = await getAccessToken(code);
 
+    // Store tokens in memory for runtime use
+    storeTokens(tokenData, realmId);
+
     console.log('=== QUICKBOOKS AUTHENTICATION SUCCESS ===');
     console.log('Access Token:', tokenData.access_token);
     console.log('Refresh Token:', tokenData.refresh_token);
@@ -48,14 +52,24 @@ router.get('/callback', async (req, res) => {
     console.log('==========================================');
 
     res.send(`
-      <h2>Authorization Success!</h2>
-      <p>Your QuickBooks access token has been generated.</p>
-      <p><strong>Please copy these values to your .env file:</strong></p>
+      <h2>🎉 Authorization Success!</h2>
+      <p>Your QuickBooks access token has been stored in memory and is ready to use!</p>
+      
+      <h3>✅ What's Ready:</h3>
       <ul>
-        <li><strong>QBO_ACCESS_TOKEN:</strong> ${tokenData.access_token}</li>
-        <li><strong>QBO_REALM_ID:</strong> ${realmId}</li>
+        <li>✅ Access Token: Stored and ready</li>
+        <li>✅ Realm ID: Stored and ready</li>
+        <li>✅ QBO Client: Ready to use</li>
       </ul>
-      <p>Then restart your server to use the QuickBooks API.</p>
+      
+      <h3>🚀 Test Your Integration:</h3>
+      <ul>
+        <li><a href="/invoices" target="_blank">List Invoices</a></li>
+        <li><a href="/auth/status" target="_blank">Check Auth Status</a></li>
+      </ul>
+      
+      <p><strong>Note:</strong> Tokens are stored in memory and will be available until the server restarts.</p>
+      <p>If you need to refresh tokens, simply visit <a href="/auth/start">/auth/start</a> again.</p>
     `);
   } catch (err) {
     console.error('Access Token Error:', err.message);
@@ -66,14 +80,21 @@ router.get('/callback', async (req, res) => {
   }
 });
 
-// Add a status endpoint to check OAuth configuration
+// Add a status endpoint to check OAuth configuration and token status
 router.get('/status', (req, res) => {
   try {
     validateOAuthConfig();
+    
+    const tokenStatus = hasValidTokens();
+    
     res.json({
       status: 'configured',
       message: 'OAuth configuration is valid',
-      redirect_uri: process.env.REDIRECT_URI
+      redirect_uri: process.env.REDIRECT_URI,
+      tokens: {
+        available: tokenStatus,
+        message: tokenStatus ? 'Tokens are available and valid' : 'No valid tokens available. Visit /auth/start to authenticate.'
+      }
     });
   } catch (error) {
     res.status(500).json({
