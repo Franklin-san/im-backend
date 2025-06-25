@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import { getAuthorizationUri, getAccessToken, validateOAuthConfig } from '../lib/oauth.js';
+import { storeTokens, hasValidTokens } from '../lib/qbo.js';
+
 const router = express.Router();
-const { getAuthorizationUri, getAccessToken, validateOAuthConfig } = require('../lib/oauth');
-const { storeTokens, hasValidTokens } = require('../lib/qbo');
 
 router.get('/start', (req, res) => {
   try {
@@ -105,4 +106,4 @@ router.get('/status', (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

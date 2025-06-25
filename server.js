@@ -1,15 +1,13 @@
-require('dotenv').config();
-const cors = require('cors');
-
-const express = require('express');
-const bodyParser = require('body-parser');
-
-const authRoutes = require('./routes/auth.js');
-const invoiceRoutes = require('./routes/invoices.js');
-const aiRoutes = require('./routes/ai.js');
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import bodyParser from 'body-parser';
+import authRoutes from './routes/auth.js';
+import invoiceRoutes from './routes/invoices.js';
+import aiRoutes from './routes/ai.js';
 
 const app = express();
-
+const PORT = process.env.PORT || 3000;
 
 app.use(bodyParser.json());
 app.use(cors());
@@ -19,6 +17,6 @@ app.use('/auth', authRoutes);
 app.use('/invoices', invoiceRoutes);
 app.use('/ai', aiRoutes);
 
-app.listen(process.env.PORT, () => {
-  console.log(`Server running at http://localhost:${process.env.PORT}`);
+app.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
 });

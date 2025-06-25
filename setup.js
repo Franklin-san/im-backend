@@ -1,5 +1,10 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { validateOAuthConfig, getAuthorizationUri } from './lib/oauth.js';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 console.log('=== QuickBooks Online Setup ===\n');
 
@@ -28,8 +33,6 @@ NODE_ENV=development
 // Test OAuth configuration
 console.log('\n=== Testing OAuth Configuration ===');
 try {
-  const { validateOAuthConfig, getAuthorizationUri } = require('./lib/oauth');
-  
   // Test validation
   validateOAuthConfig();
   console.log('✅ OAuth configuration is valid');

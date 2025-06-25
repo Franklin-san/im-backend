@@ -1,14 +1,17 @@
-const express = require('express');
+import express from 'express';
+import { getQboClientFromStorage, hasValidTokens, getStoredTokens } from '../lib/qbo.js';
+import QuickBooks from 'node-quickbooks';
+import { invoiceTools } from '../lib/ai-tools.js';
+import { generateText } from 'ai';
+import { openai } from '@ai-sdk/openai';
+
 const router = express.Router();
-const { getQboClientFromStorage, hasValidTokens, getStoredTokens } = require('../lib/qbo');
-const QuickBooks = require('node-quickbooks');
 
 // Helper function to get QBO client with proper error handling
 function getQboClientOrError() {
   if (!hasValidTokens()) {
     throw new Error('No valid tokens available. Please complete OAuth flow first by visiting /auth/start');
   }
-  
   const tokens = getStoredTokens();
   const qbo = new QuickBooks(
     process.env.CLIENT_ID,           // clientId
@@ -167,4 +170,36 @@ router.post('/:id/email', (req, res) => {
   }
 });
 
-module.exports = router;
+router.post('/invoke', async (req, res) => {
+  try {
+    const { messages, toolChoice, maxSteps, model } = req.body;
+    const systemPrompt = "You are an AI assistant for invoice management. You can answer questions and perform invoice actions.";
+    const accessToken = process.env.QBO_ACCESS_TOKEN; // Or however you get it
+    const realmId = process.env.QBO_REALM_ID;         // Or however you get it
+
+    // Create the OpenAI model instance
+    const model1 = openai(model || 'gpt-4', {
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
+    // Generate text with tools and context
+    const { text, toolResults } = await generateText({
+      model: model1,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...messages // user and assistant messages
+      ],
+      tools: invoiceTools,
+      toolContext: { accessToken, realmId },
+      maxSteps: maxSteps || 3,
+      toolChoice: toolChoice || 'auto',
+    });
+
+    // Send only the text and tool results to the frontend
+    res.json({ text, toolResults });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+export default router;
