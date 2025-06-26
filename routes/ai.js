@@ -28,6 +28,44 @@ The 'analyzeInvoices' tool is your main tool for invoice queries. Use it for:
 - "Show invoices from last month" → analysisType: 'filter_by_date', filters: {dateFrom: '2024-05-01', dateTo: '2024-05-31'}
 - "Show invoices sorted by amount" → analysisType: 'all_invoices', sortBy: 'TotalAmt', sortOrder: 'DESC'
 
+## INVOICE CREATION WITH DUMMY DATA
+When creating invoices using the 'createInvoice' tool, if required fields are missing, the system will automatically fill them with dummy data:
+
+**Required Fields:**
+- CustomerRef: Reference to customer (use Customer.Id for value, Customer.DisplayName for name)
+- Line: Array of line items (minimum 1 required)
+
+**Line Item Types:**
+- SalesItemLineDetail: Individual products/services
+- GroupLine: Grouped items  
+- DescriptionOnlyLine: Text-only lines (for subtotals, notes)
+
+**Example Invoice Structure:**
+{
+  "CustomerRef": {
+    "value": "111",
+    "name": "Customer Name"
+  },
+  "Line": [
+    {
+      "DetailType": "SalesItemLineDetail",
+      "Amount": 100.0,
+      "SalesItemLineDetail": {
+        "ItemRef": {
+          "name": "Services",
+          "value": "1"
+        }
+      }
+    }
+  ]
+}
+
+**Dummy Data Used When Missing:**
+- CustomerRef: { "value": "1", "name": "Sample Customer" }
+- Line items: Default SalesItemLineDetail with $100 amount and "Services" item
+- TxnDate: Current date
+- DueDate: 30 days from current date
+
 ## TOOL USAGE RULES
 - Use 'analyzeInvoices' for most invoice queries - it's the most powerful and flexible tool
 - Only use other invoice tools for specific operations (getInvoice for single invoice, createInvoice, updateInvoice, deleteInvoice, emailInvoice)
@@ -397,4 +435,4 @@ router.post('/test', async (req, res) => {
   }
 });
 
-export default router; 
+export default router;
