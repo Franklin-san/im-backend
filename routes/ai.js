@@ -42,49 +42,55 @@ For single invoice queries, use the 'getInvoice' tool:
 - "Show me invoice 119" → getInvoice with invoiceId: '119'
 - "Get invoice #123" → getInvoice with invoiceId: '123'
 
-## INVOICE CREATION WITH DUMMY DATA
-When creating invoices using the 'createInvoice' tool, if required fields are missing, the system will automatically fill them with dummy data:
-
-**Required Fields:**
-- CustomerRef: Reference to customer (use Customer.Id for value, Customer.DisplayName for name)
-- Line: Array of line items (minimum 1 required)
-
-**Line Item Types:**
-- SalesItemLineDetail: Individual products/services
-- GroupLine: Grouped items  
-- DescriptionOnlyLine: Text-only lines (for subtotals, notes)
-
-**Example Invoice Structure:**
+## INVOICE CREATION RULES:
+When creating invoices, you MUST follow this exact structure:
 {
   "CustomerRef": {
-    "value": "111",
+    "value": "CUSTOMER_ID",
     "name": "Customer Name"
   },
   "Line": [
     {
       "DetailType": "SalesItemLineDetail",
-      "Amount": 100.0,
+      "Amount": 100.00,
       "SalesItemLineDetail": {
         "ItemRef": {
-          "name": "Services",
-          "value": "1"
+          "value": "ITEM_ID",
+          "name": "Item Name"
         }
       }
     }
   ]
 }
 
-**Dummy Data Used When Missing:**
-- CustomerRef: { "value": "1", "name": "Sample Customer" }
-- Line items: Default SalesItemLineDetail with $100 amount and "Services" item
-- TxnDate: Current date
-- DueDate: 30 days from current date
+REQUIRED FIELDS:
+- CustomerRef.value (Customer ID) - ALWAYS required
+- Line array with at least one item - ALWAYS required
+- Each Line must have: DetailType, Amount, and ItemRef.value
+- Amount must be a number, not a string
+
+INVOICE UPDATE RULES:
+- Always retrieve the object first using its Id to get the current SyncToken and existing data.
+- Id and SyncToken are both required for updates and must reflect the latest state of the object.
+- Modify only the fields that need changes, but always include the original Id, the updated SyncToken, and any required fields like CustomerRef or Line.
+- If you are updating an Invoice, preserve existing Line items unless instructed otherwise.
+- If the update fails due to a stale SyncToken, you must refetch the latest version of the object and retry with the new token.
+
+IF FIELDS ARE MISSING:
+- Assign dummy data in the missing fields
+- If the user asks for a specific invoice, create a dummy invoice with the same ID as the requested invoice
+- CustomerRef.value is from 1 to 31 if you need to create a dummy invoice
+
+**After creating an invoice, ALWAYS show the created invoice details to the user.**
 
 ## TOOL USAGE RULES
 - Use 'analyzeInvoices' for most invoice queries - it's the most powerful and flexible tool
 - Use 'getMultipleInvoices' for queries with multiple specific invoice IDs
 - Use 'getInvoice' for single invoice queries
-- Only use other invoice tools for specific operations (createInvoice, updateInvoice, deleteInvoice, emailInvoice)
+- Use 'updateInvoice' for editing existing invoices
+- Use 'createInvoice' for creating new invoices (auto-generates customer/item IDs)
+- Use 'getCustomers' and 'getItems' only when you need to find existing customers/items
+- Only use other invoice tools for specific operations (deleteInvoice, emailInvoice)
 - For general questions about invoices, QuickBooks, or the app, respond conversationally and do NOT use any tools
 
 ## RESPONSE FORMAT FOR INVOICE QUERIES
@@ -314,9 +320,19 @@ router.post('/invoke', async (req, res) => {
       'queryInvoicesByCustomer', 'getInvoiceStats', 'analyzeInvoices'
     ];
     const isInvoiceTool = lastToolCall && invoiceToolNames.includes(lastToolCall.name);
+    const isCreateInvoiceTool = lastToolCall && lastToolCall.name === 'createInvoice';
 
     let finalText = text;
-    if ((!finalText || !finalText.trim()) && isInvoiceTool && toolResults && toolResults.length > 0) {
+    
+    // Special handling for createInvoice - show the created invoice
+    if (isCreateInvoiceTool && toolResults && toolResults.length > 0) {
+      const createdInvoice = toolResults[0].result || toolResults[0];
+      if (createdInvoice && createdInvoice.Id) {
+        finalText = `✅ Invoice created successfully!\n\n**Invoice Details:**\n- Invoice #: ${createdInvoice.DocNumber || createdInvoice.Id}\n- Customer: ${createdInvoice.CustomerRef?.name || 'Unknown'}\n- Amount: $${createdInvoice.TotalAmt || createdInvoice.Balance || '0.00'}\n- Date: ${createdInvoice.TxnDate || 'Today'}\n- Due Date: ${createdInvoice.DueDate || '30 days'}\n- Status: ${createdInvoice.Balance > 0 ? 'Unpaid' : 'Paid'}`;
+      } else {
+        finalText = '✅ Invoice created successfully!';
+      }
+    } else if ((!finalText || !finalText.trim()) && isInvoiceTool && toolResults && toolResults.length > 0) {
       let invoiceData = toolResults.map(tr => {
         const result = tr.result || tr;
         
@@ -346,7 +362,7 @@ router.post('/invoke', async (req, res) => {
     }
 
     // Only append delimited JSON if an invoice tool was used and results are present
-    if (isInvoiceTool && toolResults && toolResults.length > 0) {
+    if ((isInvoiceTool || isCreateInvoiceTool) && toolResults && toolResults.length > 0) {
       // Check if the AI already included the delimited JSON in its response
       const hasDelimitedJson = finalText.includes('===INVOICE_DATA_START===') && finalText.includes('===INVOICE_DATA_END===');
       
@@ -499,7 +515,18 @@ router.post('/stream', async (req, res) => {
         await new Promise(resolve => setTimeout(resolve, 50));
       }
     }
+    
+    // Special handling for createInvoice in streaming
     if (toolResults && toolResults.length > 0) {
+      const lastToolResult = toolResults[toolResults.length - 1];
+      if (lastToolResult && lastToolResult.toolName === 'createInvoice') {
+        const createdInvoice = lastToolResult.result || lastToolResult;
+        if (createdInvoice && createdInvoice.Id) {
+          const invoiceDetails = `\n\n✅ Invoice created successfully!\n\n**Invoice Details:**\n- Invoice #: ${createdInvoice.DocNumber || createdInvoice.Id}\n- Customer: ${createdInvoice.CustomerRef?.name || 'Unknown'}\n- Amount: $${createdInvoice.TotalAmt || createdInvoice.Balance || '0.00'}\n- Date: ${createdInvoice.TxnDate || 'Today'}\n- Due Date: ${createdInvoice.DueDate || '30 days'}\n- Status: ${createdInvoice.Balance > 0 ? 'Unpaid' : 'Paid'}`;
+          res.write(`data: ${JSON.stringify({ type: 'text', content: invoiceDetails })}\n\n`);
+        }
+      }
+      
       for (const result of toolResults) {
         res.write(`data: ${JSON.stringify({ type: 'tool-result', result })}\n\n`);
       }
