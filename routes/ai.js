@@ -4,7 +4,8 @@ import cors from 'cors';
 import { openai } from '@ai-sdk/openai';
 import { OpenAI } from 'openai';
 import { invoiceTools } from '../lib/ai-tools.js';
-import { getStoredTokens } from '../lib/qbo.js';
+import { getValidTokens } from '../lib/tokenRefresh.js';
+import { hasValidTokens } from '../lib/qbo.js';
 
 const router = express.Router();
 router.use(cors());
@@ -186,18 +187,19 @@ router.post('/invoke', async (req, res) => {
     let toolContext = null;
     
     if (needsTokens) {
-      const tokens = getStoredTokens();
-      if (!tokens || !tokens.access_token || !tokens.realm_id) {
+      try {
+        const tokens = await getValidTokens();
+        toolContext = {
+          accessToken: tokens.access_token,
+          realmId: tokens.realm_id
+        };
+      } catch (error) {
         return res.status(400).json({ 
           error: 'QuickBooks authentication required for invoice operations. Please visit /auth/start to authenticate.',
           needsAuth: true,
           conversationId
         });
       }
-      toolContext = {
-        accessToken: tokens.access_token,
-        realmId: tokens.realm_id
-      };
     }
 
     // Enhanced step tracking for better debugging
@@ -372,17 +374,18 @@ router.post('/stream', async (req, res) => {
     const needsTokens = true;
     let toolContext = null;
     if (needsTokens) {
-      const tokens = getStoredTokens();
-      if (!tokens || !tokens.access_token || !tokens.realm_id) {
+      try {
+        const tokens = await getValidTokens();
+        toolContext = {
+          accessToken: tokens.access_token,
+          realmId: tokens.realm_id
+        };
+      } catch (error) {
         return res.status(400).json({ 
           error: 'QuickBooks authentication required for invoice operations. Please visit /auth/start to authenticate.',
           needsAuth: true
         });
       }
-      toolContext = {
-        accessToken: tokens.access_token,
-        realmId: tokens.realm_id
-      };
     }
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Transfer-Encoding', 'chunked');
