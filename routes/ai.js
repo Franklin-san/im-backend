@@ -15,44 +15,115 @@ const model1 = openai('gpt-4o', {
 
 const SYSTEM_PROMPT = `You are an intelligent QuickBooks Invoice Management Assistant. You are designed to help users manage, analyze, and understand their invoice data efficiently.
 
+## PRIMARY TOOL: analyzeInvoices
+The 'analyzeInvoices' tool is your main tool for invoice queries. Use it for:
+- "Show all invoices" → analysisType: 'all_invoices'
+- "Show invoices for [customer]" → analysisType: 'filter_by_customer', filters: {customerName: 'customer'}
+- "Show overdue invoices" → analysisType: 'overdue_invoices'
+- "Show paid invoices" → analysisType: 'paid_invoices'
+- "Show unpaid invoices" → analysisType: 'unpaid_invoices'
+- "Show high value invoices" → analysisType: 'high_value_invoices'
+- "Show recent invoices" → analysisType: 'recent_invoices'
+- "Show invoices over $1000" → analysisType: 'filter_by_amount', filters: {minAmount: 1000}
+- "Show invoices from last month" → analysisType: 'filter_by_date', filters: {dateFrom: '2024-05-01', dateTo: '2024-05-31'}
+- "Show invoices sorted by amount" → analysisType: 'all_invoices', sortBy: 'TotalAmt', sortOrder: 'DESC'
+
 ## TOOL USAGE RULES
-- Only use invoice tools when the user is asking for invoice data or actions (like show, list, create, update, delete, or email invoices).
-- For general questions about invoices, QuickBooks, or the app, respond conversationally and do NOT use any tools.
+- Use 'analyzeInvoices' for most invoice queries - it's the most powerful and flexible tool
+- Only use other invoice tools for specific operations (getInvoice for single invoice, createInvoice, updateInvoice, deleteInvoice, emailInvoice)
+- For general questions about invoices, QuickBooks, or the app, respond conversationally and do NOT use any tools
 
-## MULTIPLE INVOICE QUERIES
-- If the user asks for multiple invoices by ID, you may call the getInvoice tool multiple times (once for each ID), or use listInvoices and filter by ID.
-- When returning invoice data, only include these fields for each invoice: id, Invoice # (DocNumber), Customer (CustomerRef.name), Date (TxnDate), Due Date (DueDate), Total (TotalAmt), Balance (Balance), Status (Paid/Unpaid/Partial based on Balance).
-- Always summarize the result in a plain text paragraph (no markdown, no bullet points, no formatting). Example: 'Here are 3 invoices. The highest balance is $500 for invoice 2. The total amount is $1200.'
-- After the summary, always include the delimited JSON block for the UI, but the JSON should only contain the specified fields for each invoice.
+## RESPONSE FORMAT FOR INVOICE QUERIES
+When using analyzeInvoices or other invoice tools:
+1. **Summary**: Write a natural, conversational summary in PLAIN TEXT ONLY (no markdown, no bullet points, no formatting). Include key insights like:
+   - Number of invoices found
+   - Total amounts and balances
+   - Payment status breakdown
+   - Top customers (if relevant)
+   - Any notable patterns or insights
+2. **JSON Data**: Always include the delimited JSON block for the frontend table
 
-## SINGLE INVOICE QUERIES
-- For a single invoice, provide a concise summary in plain text, then the delimited JSON block with only the specified fields.
+## SUMMARY EXAMPLES (PLAIN TEXT ONLY)
+- "I found 15 invoices totaling $45,200. 8 are paid ($28,500) and 7 are unpaid ($16,700). The highest unpaid balance is $5,200 for ABC Company."
+- "There are 3 overdue invoices totaling $8,900. All are from different customers and range from $1,200 to $4,500."
+- "I found 25 invoices for Cool Cars totaling $67,800. 12 are paid ($32,400) and 13 are unpaid ($35,400)."
 
-## RESPONSE FORMAT
-- For invoice queries: summary paragraph, then delimited JSON block.
-- For general chat: respond conversationally, do not use tools, do not include any JSON or delimiters.
+## JSON FORMAT
+Always use these exact field names in the JSON:
+- Id: invoice ID
+- DocNumber: invoice number
+- CustomerRef: { name: customer name }
+- TxnDate: transaction date
+- DueDate: due date
+- TotalAmt: total amount
+- Balance: remaining balance
+- Status: invoice status
+
+## CRITICAL FORMAT RULES
+- Write summary in PLAIN TEXT ONLY - no markdown, no bullet points, no formatting
+- Always include the exact delimiters: ===INVOICE_DATA_START=== and ===INVOICE_DATA_END===
+- The JSON must be between these delimiters
+- Do not include any other formatting or markdown in the response
+- Do not include "Here's a breakdown" or similar phrases
+- Do not include bullet points or numbered lists
+- Do not include markdown formatting like **bold** or \`\`\`json\`\`\`
 
 ## EXAMPLES
-User: 'Show me invoices 1, 2, 3'
-Agent: 'Here are 3 invoices. The highest balance is $500 for invoice 2. The total amount is $1200.'
+User: "Show me all invoices"
+Agent: "I found 42 invoices in your system totaling $156,800. 28 are paid ($98,400) and 14 are unpaid ($58,400). The average invoice amount is $3,733. Your top customer is ABC Company with 8 invoices totaling $24,600."
 ===INVOICE_DATA_START===
 [ ... ]
 ===INVOICE_DATA_END===
 
-User: 'What is QuickBooks?'
-Agent: 'QuickBooks is an accounting software platform for small and medium-sized businesses.'
+User: "Show overdue invoices"
+Agent: "I found 7 overdue invoices totaling $23,400. These are all unpaid invoices with due dates in the past. The oldest overdue invoice is from March 15th for $4,200."
+===INVOICE_DATA_START===
+[ ... ]
+===INVOICE_DATA_END===
 
-Remember: Only use tools for invoice data requests. Always summarize in plain text. Only include the specified fields in the JSON.`;
+User: "What is QuickBooks?"
+Agent: "QuickBooks is an accounting software platform for small and medium-sized businesses."
+
+Remember: Use analyzeInvoices for most queries. Write natural summaries in PLAIN TEXT ONLY. Always include the JSON block with exact delimiters for invoice data. NO MARKDOWN FORMATTING.`;
 
 function generateInvoiceSummary(invoices) {
   if (!Array.isArray(invoices) || invoices.length === 0) return '';
+  
+  // Handle analyzeInvoices response format
+  if (invoices.length === 1 && invoices[0] && invoices[0].invoices) {
+    const result = invoices[0];
+    const invoiceList = result.invoices;
+    const analysis = result.analysis;
+    
+    if (invoiceList.length === 0) {
+      return 'No invoices found matching your criteria.';
+    }
+    
+    if (invoiceList.length === 1) {
+      const inv = invoiceList[0];
+      return `I found 1 invoice: #${inv.DocNumber} for ${inv.CustomerRef?.name || 'Unknown'} - $${inv.TotalAmt} (Balance: $${inv.Balance}).`;
+    }
+    
+    if (analysis) {
+      return `I found ${analysis.totalInvoices} invoices totaling $${analysis.totalAmount.toFixed(2)}. ${analysis.paidCount} are paid ($${analysis.totalAmount - analysis.totalBalance}) and ${analysis.unpaidCount} are unpaid ($${analysis.totalBalance.toFixed(2)}).`;
+    }
+    
+    const total = invoiceList.reduce((sum, inv) => sum + (parseFloat(inv.TotalAmt) || 0), 0);
+    const balance = invoiceList.reduce((sum, inv) => sum + (parseFloat(inv.Balance) || 0), 0);
+    return `I found ${invoiceList.length} invoices totaling $${total.toFixed(2)}. The total outstanding balance is $${balance.toFixed(2)}.`;
+  }
+  
+  // Handle direct invoice arrays (legacy format)
   if (invoices.length === 1) {
     const inv = invoices[0];
     return `Here is invoice #${inv.DocNumber} for ${inv.CustomerRef?.name || 'Unknown'}: $${inv.TotalAmt} (Balance: $${inv.Balance}).`;
   }
-  const max = invoices.reduce((a, b) => (parseFloat(a.Balance) > parseFloat(b.Balance) ? a : b));
+  
   const total = invoices.reduce((sum, inv) => sum + (parseFloat(inv.TotalAmt) || 0), 0);
-  return `Here are ${invoices.length} invoices. The highest balance is $${max.Balance} for invoice #${max.DocNumber}. The total amount is $${total}.`;
+  const balance = invoices.reduce((sum, inv) => sum + (parseFloat(inv.Balance) || 0), 0);
+  const max = invoices.reduce((a, b) => (parseFloat(a.Balance) > parseFloat(b.Balance) ? a : b));
+  
+  return `I found ${invoices.length} invoices totaling $${total.toFixed(2)}. The total outstanding balance is $${balance.toFixed(2)}. The highest unpaid balance is $${max.Balance} for invoice #${max.DocNumber}.`;
 }
 
 // Non-streaming AI invoke endpoint
@@ -137,7 +208,7 @@ router.post('/invoke', async (req, res) => {
     const invoiceToolNames = [
       'getInvoice', 'getMultipleInvoices', 'listInvoices',
       'queryInvoicesByAmount', 'queryInvoicesByDate',
-      'queryInvoicesByCustomer', 'getInvoiceStats'
+      'queryInvoicesByCustomer', 'getInvoiceStats', 'analyzeInvoices'
     ];
     const isInvoiceTool = lastToolCall && invoiceToolNames.includes(lastToolCall.name);
 
@@ -152,22 +223,40 @@ router.post('/invoke', async (req, res) => {
 
     // Only append delimited JSON if an invoice tool was used and results are present
     if (isInvoiceTool && toolResults && toolResults.length > 0) {
-      // Extract invoice data from toolResults (handle .result or direct)
-      let invoiceData = toolResults.map(tr => tr.result || tr);
-      // If the AI returned custom/flat fields, map them to standard names
-      const mapped = invoiceData.map(inv => ({
-        Id: inv.id || inv.Id,
-        DocNumber: inv.DocNumber || inv["Invoice #"],
-        CustomerRef: { name: inv.Customer || (inv.CustomerRef && inv.CustomerRef.name) },
-        TxnDate: inv.TxnDate || inv["Date"],
-        DueDate: inv.DueDate || inv["Due Date"],
-        TotalAmt: inv.TotalAmt || inv["Total"],
-        Balance: inv.Balance,
-        Status: inv.Status,
-      }));
-      finalText += '\n\n===INVOICE_DATA_START===\n';
-      finalText += JSON.stringify(mapped, null, 2);
-      finalText += '\n===INVOICE_DATA_END===';
+      // Check if the AI already included the delimited JSON in its response
+      const hasDelimitedJson = finalText.includes('===INVOICE_DATA_START===') && finalText.includes('===INVOICE_DATA_END===');
+      
+      if (!hasDelimitedJson) {
+        // Extract invoice data from toolResults (handle .result or direct)
+        let invoiceData = toolResults.map(tr => {
+          const result = tr.result || tr;
+          // Handle analyzeInvoices response format which returns { invoices, analysis, queryInfo }
+          if (result && result.invoices && Array.isArray(result.invoices)) {
+            return result.invoices;
+          }
+          // Handle other tools that return invoice arrays directly
+          if (Array.isArray(result)) {
+            return result;
+          }
+          // Handle single invoice objects
+          return [result];
+        }).flat();
+        
+        // If the AI returned custom/flat fields, map them to standard names
+        const mapped = invoiceData.map(inv => ({
+          Id: inv.id || inv.Id,
+          DocNumber: inv.DocNumber || inv["Invoice #"],
+          CustomerRef: { name: inv.Customer || (inv.CustomerRef && inv.CustomerRef.name) },
+          TxnDate: inv.TxnDate || inv["Date"],
+          DueDate: inv.DueDate || inv["Due Date"],
+          TotalAmt: inv.TotalAmt || inv["Total"],
+          Balance: inv.Balance,
+          Status: inv.Status,
+        }));
+        finalText += '\n\n===INVOICE_DATA_START===\n';
+        finalText += JSON.stringify(mapped, null, 2);
+        finalText += '\n===INVOICE_DATA_END===';
+      }
     }
     
     // Enhanced response object with more context
