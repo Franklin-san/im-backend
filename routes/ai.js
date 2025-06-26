@@ -29,6 +29,19 @@ The 'analyzeInvoices' tool is your main tool for invoice queries. Use it for:
 - "Show invoices from last month" → analysisType: 'filter_by_date', filters: {dateFrom: '2024-05-01', dateTo: '2024-05-31'}
 - "Show invoices sorted by amount" → analysisType: 'all_invoices', sortBy: 'TotalAmt', sortOrder: 'DESC'
 
+## MULTIPLE INVOICE QUERIES
+For queries involving multiple specific invoice IDs, use the 'getMultipleInvoices' tool:
+- "Show me invoices 119 and 1119" → getMultipleInvoices with invoiceIds: ['119', '1119']
+- "Get invoices 1, 5, and 10" → getMultipleInvoices with invoiceIds: ['1', '5', '10']
+- "Find invoices 100, 200, 300" → getMultipleInvoices with invoiceIds: ['100', '200', '300']
+
+This tool provides partial results and explanations when some invoices exist and others don't, giving users meaningful responses instead of errors.
+
+## SINGLE INVOICE QUERIES
+For single invoice queries, use the 'getInvoice' tool:
+- "Show me invoice 119" → getInvoice with invoiceId: '119'
+- "Get invoice #123" → getInvoice with invoiceId: '123'
+
 ## INVOICE CREATION WITH DUMMY DATA
 When creating invoices using the 'createInvoice' tool, if required fields are missing, the system will automatically fill them with dummy data:
 
@@ -69,23 +82,28 @@ When creating invoices using the 'createInvoice' tool, if required fields are mi
 
 ## TOOL USAGE RULES
 - Use 'analyzeInvoices' for most invoice queries - it's the most powerful and flexible tool
-- Only use other invoice tools for specific operations (getInvoice for single invoice, createInvoice, updateInvoice, deleteInvoice, emailInvoice)
+- Use 'getMultipleInvoices' for queries with multiple specific invoice IDs
+- Use 'getInvoice' for single invoice queries
+- Only use other invoice tools for specific operations (createInvoice, updateInvoice, deleteInvoice, emailInvoice)
 - For general questions about invoices, QuickBooks, or the app, respond conversationally and do NOT use any tools
 
 ## RESPONSE FORMAT FOR INVOICE QUERIES
-When using analyzeInvoices or other invoice tools:
+When using invoice tools:
 1. **Summary**: Write a natural, conversational summary in PLAIN TEXT ONLY (no markdown, no bullet points, no formatting). Include key insights like:
    - Number of invoices found
    - Total amounts and balances
    - Payment status breakdown
    - Top customers (if relevant)
    - Any notable patterns or insights
+   - For multiple invoice queries: explain which were found and which were not found
 2. **JSON Data**: Always include the delimited JSON block for the frontend table
 
 ## SUMMARY EXAMPLES (PLAIN TEXT ONLY)
 - "I found 15 invoices totaling $45,200. 8 are paid ($28,500) and 7 are unpaid ($16,700). The highest unpaid balance is $5,200 for ABC Company."
 - "There are 3 overdue invoices totaling $8,900. All are from different customers and range from $1,200 to $4,500."
 - "I found 25 invoices for Cool Cars totaling $67,800. 12 are paid ($32,400) and 13 are unpaid ($35,400)."
+- "Found 1 invoice: #119 for ABC Company - $500. Invoice 1119 not found."
+- "Found 2 invoices totaling $1,200. Invoice 100 not found."
 
 ## JSON FORMAT
 Always use these exact field names in the JSON:
@@ -114,8 +132,8 @@ Agent: "I found 42 invoices in your system totaling $156,800. 28 are paid ($98,4
 [ ... ]
 ===INVOICE_DATA_END===
 
-User: "Show overdue invoices"
-Agent: "I found 7 overdue invoices totaling $23,400. These are all unpaid invoices with due dates in the past. The oldest overdue invoice is from March 15th for $4,200."
+User: "Show me invoices 119 and 1119"
+Agent: "Found 1 invoice: #119 for ABC Company - $500. Invoice 1119 not found."
 ===INVOICE_DATA_START===
 [ ... ]
 ===INVOICE_DATA_END===
@@ -123,10 +141,55 @@ Agent: "I found 7 overdue invoices totaling $23,400. These are all unpaid invoic
 User: "What is QuickBooks?"
 Agent: "QuickBooks is an accounting software platform for small and medium-sized businesses."
 
-Remember: Use analyzeInvoices for most queries. Write natural summaries in PLAIN TEXT ONLY. Always include the JSON block with exact delimiters for invoice data. NO MARKDOWN FORMATTING.`;
+Remember: Use analyzeInvoices for most queries, getMultipleInvoices for multiple specific IDs, getInvoice for single IDs. Write natural summaries in PLAIN TEXT ONLY. Always include the JSON block with exact delimiters for invoice data. NO MARKDOWN FORMATTING.`;
 
 function generateInvoiceSummary(invoices) {
   if (!Array.isArray(invoices) || invoices.length === 0) return '';
+  
+  // Handle getMultipleInvoices response format
+  if (invoices.length === 1 && invoices[0] && invoices[0].found !== undefined) {
+    const result = invoices[0];
+    
+    // If no invoices found at all
+    if (result.found.length === 0 && result.notFound.length > 0) {
+      return `I searched for ${result.summary.totalRequested} invoice(s) but none were found. The following invoice IDs do not exist: ${result.notFound.join(', ')}.`;
+    }
+    
+    // If some invoices found and some not found
+    if (result.found.length > 0 && result.notFound.length > 0) {
+      const foundSummary = result.found.length === 1 
+        ? `Found 1 invoice: #${result.found[0].DocNumber} for ${result.found[0].CustomerRef?.name || 'Unknown'} - $${result.found[0].TotalAmt}`
+        : `Found ${result.found.length} invoices totaling $${result.found.reduce((sum, inv) => sum + (parseFloat(inv.TotalAmt) || 0), 0).toFixed(2)}`;
+      
+      return `${foundSummary}. ${result.notFound.length} invoice(s) not found: ${result.notFound.join(', ')}.`;
+    }
+    
+    // If all invoices found
+    if (result.found.length > 0 && result.notFound.length === 0) {
+      if (result.found.length === 1) {
+        const inv = result.found[0];
+        return `Found invoice #${inv.DocNumber} for ${inv.CustomerRef?.name || 'Unknown'}: $${inv.TotalAmt} (Balance: $${inv.Balance}).`;
+      } else {
+        const total = result.found.reduce((sum, inv) => sum + (parseFloat(inv.TotalAmt) || 0), 0);
+        return `Found all ${result.found.length} requested invoices totaling $${total.toFixed(2)}.`;
+      }
+    }
+    
+    // If there were errors
+    if (result.errors.length > 0) {
+      let message = '';
+      if (result.found.length > 0) {
+        message += `Found ${result.found.length} invoice(s). `;
+      }
+      message += `${result.errors.length} invoice(s) had errors: ${result.errors.map(e => `${e.invoiceId} (${e.error})`).join(', ')}.`;
+      return message;
+    }
+    
+    // Fallback to response message if available
+    if (result.responseMessage) {
+      return result.responseMessage;
+    }
+  }
   
   // Handle analyzeInvoices response format
   if (invoices.length === 1 && invoices[0] && invoices[0].invoices) {
@@ -254,7 +317,28 @@ router.post('/invoke', async (req, res) => {
 
     let finalText = text;
     if ((!finalText || !finalText.trim()) && isInvoiceTool && toolResults && toolResults.length > 0) {
-      let invoiceData = toolResults.map(tr => tr.result || tr);
+      let invoiceData = toolResults.map(tr => {
+        const result = tr.result || tr;
+        
+        // Handle getMultipleInvoices response format
+        if (result && result.found !== undefined) {
+          return result.found; // Return only the found invoices
+        }
+        
+        // Handle analyzeInvoices response format which returns { invoices, analysis, queryInfo }
+        if (result && result.invoices && Array.isArray(result.invoices)) {
+          return result.invoices;
+        }
+        
+        // Handle other tools that return invoice arrays directly
+        if (Array.isArray(result)) {
+          return result;
+        }
+        
+        // Handle single invoice objects
+        return [result];
+      }).flat();
+      
       finalText = generateInvoiceSummary(invoiceData);
     }
     if (!finalText || !finalText.trim()) {
@@ -270,14 +354,22 @@ router.post('/invoke', async (req, res) => {
         // Extract invoice data from toolResults (handle .result or direct)
         let invoiceData = toolResults.map(tr => {
           const result = tr.result || tr;
+          
+          // Handle getMultipleInvoices response format
+          if (result && result.found !== undefined) {
+            return result.found; // Return only the found invoices
+          }
+          
           // Handle analyzeInvoices response format which returns { invoices, analysis, queryInfo }
           if (result && result.invoices && Array.isArray(result.invoices)) {
             return result.invoices;
           }
+          
           // Handle other tools that return invoice arrays directly
           if (Array.isArray(result)) {
             return result;
           }
+          
           // Handle single invoice objects
           return [result];
         }).flat();
