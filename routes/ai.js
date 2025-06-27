@@ -86,12 +86,19 @@ IF FIELDS ARE MISSING:
 ## TOOL USAGE RULES
 - Use 'analyzeInvoices' for most invoice queries - it's the most powerful and flexible tool
 - Use 'getMultipleInvoices' for queries with multiple specific invoice IDs
-- Use 'getInvoice' for single invoice queries
+- Use 'getInvoice' for single invoice queries (returns {success: true/false, invoice/error, message})
 - Use 'updateInvoice' for editing existing invoices
 - **ALWAYS use 'createInvoice' tool when user asks to create an invoice** - NEVER respond conversationally
 - Use 'getCustomers' and 'getItems' only when you need to find existing customers/items
 - Only use other invoice tools for specific operations (deleteInvoice, emailInvoice)
 - For general questions about invoices, QuickBooks, or the app (NOT creation requests), respond conversationally and do NOT use any tools
+
+## GETINVOICE RESPONSE HANDLING
+The getInvoice tool returns:
+- Success: {success: true, invoice: {...}, message: "..."}
+- Error: {success: false, error: "...", invoiceId: "...", message: "..."}
+
+When getInvoice returns an error (success: false), use the message field to inform the user about the issue. The message will explain why the invoice wasn't found (wrong ID, deleted, wrong transaction type, etc.).
 
 ## INVOICE CREATION REQUESTS
 When user asks to create an invoice, you MUST:
@@ -340,43 +347,29 @@ router.post('/invoke', async (req, res) => {
     const isInvoiceTool = lastToolCall && invoiceToolNames.includes(lastToolCall.name);
     const isCreateInvoiceTool = lastToolCall && lastToolCall.name === 'createInvoice';
     const isUpdateInvoiceTool = lastToolCall && lastToolCall.name === 'updateInvoice';
+    const isGetInvoiceTool = lastToolCall && lastToolCall.name === 'getInvoice';
 
     let finalText = text;
     
-    // Special handling for createInvoice - show the created invoice
-    if (isCreateInvoiceTool && toolResults && toolResults.length > 0) {
+    // Special handling for getInvoice - handle error responses gracefully
+    if (isGetInvoiceTool && toolResults && toolResults.length > 0) {
+      const result = toolResults[0].result || toolResults[0];
+      if (result && result.success === false) {
+        // Handle error case from getInvoice
+        finalText = result.message || `Invoice not found: ${result.error}`;
+        
+        // Add empty array to delimited JSON to trigger frontend refresh
+        finalText += '\n\n===INVOICE_DATA_START===\n[]\n===INVOICE_DATA_END===';
+      } else if (result && result.success === true && result.invoice) {
+        // Handle success case from getInvoice
+        finalText = `Found invoice: ${result.invoice.DocNumber || result.invoice.Id} for ${result.invoice.CustomerRef?.name || 'Unknown Customer'}, Amount: $${result.invoice.TotalAmt || '0.00'}`;
+      }
+    } else if (isCreateInvoiceTool && toolResults && toolResults.length > 0) {
       const createdInvoice = toolResults[0].result || toolResults[0];
       if (createdInvoice && createdInvoice.Id) {
         finalText = `Invoice created successfully! Invoice #: ${createdInvoice.DocNumber || createdInvoice.Id}, Customer: ${createdInvoice.CustomerRef?.name || 'Unknown'}, Amount: $${createdInvoice.TotalAmt || createdInvoice.Balance || '0.00'}, Date: ${createdInvoice.TxnDate || 'Today'}, Due Date: ${createdInvoice.DueDate || '30 days'}, Status: ${createdInvoice.Balance > 0 ? 'Unpaid' : 'Paid'}`;
       } else {
         finalText = 'Invoice created successfully!';
-      }
-    } else if (isCreateInvoiceTool && stepLogs && stepLogs.length > 0) {
-      // Fallback: If toolResults is empty but we have stepLogs, try to extract from the tool call
-      console.log('⚠️ createInvoice tool called but toolResults is empty, checking stepLogs...');
-      const createStep = stepLogs.find(step => step.toolCalls && step.toolCalls.some(tc => tc.name === 'createInvoice'));
-      if (createStep) {
-        const toolCall = createStep.toolCalls.find(tc => tc.name === 'createInvoice');
-        if (toolCall && toolCall.args && toolCall.args.invoice) {
-          const invoiceData = toolCall.args.invoice;
-          finalText = `Invoice created successfully! Customer: ${invoiceData.CustomerRef?.name || 'Unknown'}, Amount: $${invoiceData.Line?.[0]?.Amount || '0.00'}, Item: ${invoiceData.Line?.[0]?.SalesItemLineDetail?.ItemRef?.name || 'Unknown'}`;
-          
-          // Create a mock result for the frontend
-          const mockResult = {
-            Id: 'TEMP_' + Date.now(),
-            DocNumber: 'TEMP_' + Date.now(),
-            CustomerRef: invoiceData.CustomerRef,
-            TxnDate: new Date().toISOString().split('T')[0],
-            DueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-            TotalAmt: invoiceData.Line?.[0]?.Amount || 0,
-            Balance: invoiceData.Line?.[0]?.Amount || 0,
-            Status: 'Unpaid'
-          };
-          
-          // Add to toolResults if it doesn't exist
-          if (!toolResults) toolResults = [];
-          toolResults.push({ result: mockResult });
-        }
       }
     } else if (isUpdateInvoiceTool && toolResults && toolResults.length > 0) {
       // Special handling for updateInvoice - show the updated invoice
